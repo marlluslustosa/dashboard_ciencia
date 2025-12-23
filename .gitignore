@@ -29,3 +29,11 @@ MANIFEST
 .installed
 .tox/
 .nox/
+.devcontainer/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover  
