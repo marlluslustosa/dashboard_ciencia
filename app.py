@@ -1,4 +1,5 @@
 import streamlit as st
+import os
 import pandas as pd
 import plotly.graph_objects as go
 from sklearn.preprocessing import StandardScaler
@@ -22,25 +23,70 @@ st.markdown("""
 """)
 
 # ==========================================
-# BARRA LATERAL (UPLOAD REFERÊNCIA)
+# BARRA LATERAL (CONFIGURAÇÃO)
 # ==========================================
-st.sidebar.header("1. Arquivo de Referência")
-qualis_file = st.sidebar.file_uploader("Upload 'lista_qualis_educacao.xlsx'", type=["xlsx", "xls"])
+st.sidebar.header("1. Configuração de Dados")
 
-# ==========================================
-# INTERFACE PRINCIPAL
-# ==========================================
-st.header("2. Arquivos dos Pesquisadores")
-uploaded_zip = st.file_uploader("Arraste o arquivo ZIP com os CSVs aqui", type="zip")
+# Checkbox para ativar dados de exemplo
+usar_exemplo = st.sidebar.checkbox(
+    "📂 Carregar Dados de Exemplo", 
+    value=False,
+    help="Marque para visualizar o dashboard com dados de demonstração."
+)
 
-if uploaded_zip is not None and qualis_file is not None:
+st.sidebar.divider()
+
+# Variáveis para armazenar os arquivos finais a serem processados
+arquivo_qualis_final = None
+arquivo_zip_final = None
+
+# Lógica de Seleção da Fonte de Dados
+if usar_exemplo:
+    # --- MODO EXEMPLO ---
+    st.sidebar.info("⚠️ Modo de Demonstração Ativo")
     
-    with st.spinner('Lendo referência Qualis e filtrando CSVs...'):
+    # Caminhos locais (certifique-se que a pasta assets existe)
+    path_qualis = os.path.join(os.path.dirname(__file__), "assets", "lista_qualis_educacao.xlsx")
+    path_zip = os.path.join(os.path.dirname(__file__), "assets", "pesquisadores.zip")
+    
+    # Verifica se arquivos existem antes de tentar carregar
+    if os.path.exists(path_qualis) and os.path.exists(path_zip):
+        arquivo_qualis_final = path_qualis
+        arquivo_zip_final = path_zip
+        
+        # Botões para o usuário baixar os exemplos (Opcional, mas recomendado)
+        #with open(path_zip, "rb") as f:
+        #    st.sidebar.download_button("⬇️ Baixar ZIP Exemplo", f, "exemplo_pesquisadores.zip")
+        #with open(path_qualis, "rb") as f:
+        #    st.sidebar.download_button("⬇️ Baixar Qualis Exemplo", f, "exemplo_qualis.xlsx")
+    else:
+        st.error("Arquivos de exemplo não encontrados na pasta 'assets'.")
+
+else:
+    # --- MODO UPLOAD MANUAL ---
+    st.sidebar.subheader("Upload de Arquivos")
+    arquivo_qualis_final = st.sidebar.file_uploader("1. Lista Qualis (Excel)", type=["xlsx", "xls"])
+    
+    st.header("2. Arquivos dos Pesquisadores")
+    arquivo_zip_final = st.file_uploader("2. Arraste o arquivo ZIP aqui", type="zip")
+    
+    if not arquivo_qualis_final or not arquivo_zip_final:
+        st.info("👆 Faça o upload dos arquivos ou selecione 'Carregar Dados de Exemplo' no menu lateral.")
+
+# ==========================================
+# PROCESSAMENTO (CONDICIONAL)
+# ==========================================
+
+# Só roda se tivermos OS DOIS arquivos (seja do exemplo ou do upload)
+if arquivo_zip_final is not None and arquivo_qualis_final is not None:
+    
+    with st.spinner('Processando dados...'):
         try:
-            df_ref = pd.read_excel(qualis_file)
-            data_raw, log_texto = processar_zip_com_filtro(uploaded_zip, df_ref)
+            # Pandas lê tanto upload (bytes) quanto path (string) sem mudar nada
+            df_ref = pd.read_excel(arquivo_qualis_final)
+            data_raw, log_texto = processar_zip_com_filtro(arquivo_zip_final, df_ref)
         except Exception as e:
-            st.error(f"Erro ao ler arquivo Excel: {e}")
+            st.error(f"Erro ao ler arquivos: {e}")
             data_raw = None
 
     if data_raw is not None:
@@ -319,5 +365,9 @@ if uploaded_zip is not None and qualis_file is not None:
                     c2.write("**Faltando:**"); 
                     for p in faltando: c2.error(f"- {p}")
 
-elif uploaded_zip is None:
-    st.info("Aguardando upload do ZIP...")
+elif not usar_exemplo:
+    # Se NÃO está no modo exemplo E ainda não tem arquivo (manual), mostra mensagem.
+    if arquivo_zip_final is None and arquivo_qualis_final is not None:
+         st.info("Aguardando upload do arquivo ZIP com os CSVs dos pesquisadores...")
+    elif arquivo_qualis_final is None:
+         st.info("Aguardando upload do arquivo Qualis (Excel) no menu lateral...")
