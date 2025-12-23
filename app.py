@@ -15,7 +15,7 @@ from src.processor import processar_zip_com_filtro
 # ==========================================
 st.set_page_config(page_title="Dashboard Pesquisadores + Filtro Qualis", layout="wide")
 
-st.title("📊 Dashboard de Produção Científica (Com Filtro Qualis (Quadriênio 2017-2020))")
+st.title("📊 Dashboard de Produção Científica (Com Filtro Qualis 2017-2020)")
 st.markdown("""
 1. Faça upload da **Lista Qualis (Excel)** no menu lateral.
 2. Faça upload do **ZIP com os CSVs** dos pesquisadores abaixo.
