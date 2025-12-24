@@ -352,7 +352,7 @@ if fontes_para_processar:
             for k in PESOS:
                 if k not in c_data: c_data[k] = 0
             c_data = c_data[list(PESOS.keys())]
-            if len(c_data) > 0:
+            if len(c_data) > 1:
                 scaler = StandardScaler()
                 scaled = scaler.fit_transform(c_data)
                 n_clusters_i = min(3, len(c_data))
@@ -367,6 +367,8 @@ if fontes_para_processar:
                     fig_cluster.add_trace(go.Scatter(x=d.x, y=d.y, mode="markers+text", text=d.pesquisador, name=f"Grupo {int(c)+1}", marker=dict(size=12, line=dict(width=1, color='DarkSlateGrey')), hovertemplate="<b>%{text}</b><br>Grupo: %{name}<extra></extra>"))
                 fig_cluster.update_layout(title="Cluster de Similaridade (Individual)")
                 st.plotly_chart(fig_cluster, use_container_width=True)
+            else:
+                st.warning("Dados insuficientes para gerar o Cluster de Similaridade. É necessário haver pelo menos 2 pesquisadores para comparação.")
             st.info("Visualização dos gráficos individuais carregada.")
 
         # =======================================================
@@ -464,7 +466,7 @@ if fontes_para_processar:
                 for k in PESOS:
                     if k not in c_data_g: c_data_g[k] = 0
                 c_data_g = c_data_g[list(PESOS.keys())]
-                if len(c_data_g) > 0:
+                if len(c_data_g) > 1:
                     scaler_g = StandardScaler()
                     scaled_g = scaler_g.fit_transform(c_data_g)
                     n_clusters_g = min(3, len(c_data_g))
@@ -479,6 +481,8 @@ if fontes_para_processar:
                         fig_cluster_g.add_trace(go.Scatter(x=d.x, y=d.y, mode="markers+text", text=d.grupo, name=f"Grupo {int(c)+1}", marker=dict(size=12, line=dict(width=1, color='DarkSlateGrey')), hovertemplate="<b>%{text}</b><br>Grupo: %{name}<extra></extra>"))
                     fig_cluster_g.update_layout(title="Cluster de Similaridade (Grupos)", height=600)
                     st.plotly_chart(fig_cluster_g, use_container_width=True)
+                else:
+                    st.warning("Dados insuficientes para gerar o Cluster de Similaridade de Grupos. É necessário haver pelo menos 2 grupos/programas para comparação.")
             else:
                 st.warning("Não há dados suficientes para gerar a análise de grupos.")
             st.info("Visualização dos gráficos de grupos carregada.")
