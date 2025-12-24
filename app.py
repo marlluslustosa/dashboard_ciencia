@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import pandas as pd
+import zipfile
 import plotly.graph_objects as go
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
@@ -39,6 +40,7 @@ st.sidebar.divider()
 fontes_para_processar = []
 data_raw = None
 log_texto = ""
+filtro_padrao = ""
 
 if modo_dados == "Repositório (Comparativo)":
     st.sidebar.info("⚠️ Modo Repositório Ativo")
@@ -60,10 +62,43 @@ if modo_dados == "Repositório (Comparativo)":
         # Adicione outros programas aqui conforme disponibilidade
     }
     
+    # --- BUSCA GLOBAL (SCAN DE ARQUIVOS) ---
+    st.sidebar.markdown("### 🔍 Busca Global")
+    termo_global = st.sidebar.text_input("Localizar Pesquisador (Scan)", help="Busca em todos os programas sem carregar os dados.")
+    
+    programas_sugeridos = ["PPGE (Educação)"] if "PPGE (Educação)" in CATALOGO else []
+    
+    if termo_global:
+        filtro_padrao = termo_global
+        encontrados = []
+        termo_norm = normalizar_texto(termo_global)
+        
+        # Itera sobre os arquivos físicos sem carregar CSVs (Alta Performance)
+        for prog, caminhos in CATALOGO.items():
+            zip_path = caminhos["zip"]
+            if os.path.exists(zip_path):
+                try:
+                    with zipfile.ZipFile(zip_path, 'r') as z:
+                        # Verifica apenas os nomes dos arquivos dentro do ZIP
+                        for filename in z.namelist():
+                            # Remove extensão e normaliza (ex: "Jose_Silva.csv" -> "jose silva")
+                            nome_limpo = os.path.splitext(os.path.basename(filename))[0].replace("_", " ")
+                            if termo_norm in normalizar_texto(nome_limpo):
+                                encontrados.append(prog)
+                                break # Encontrou neste programa, pula para o próximo
+                except:
+                    pass
+        
+        if encontrados:
+            st.sidebar.success(f"Encontrado em: {len(encontrados)} programa(s).")
+            programas_sugeridos = encontrados
+        else:
+            st.sidebar.warning("Pesquisador não encontrado nos arquivos do repositório.")
+
     selecao = st.sidebar.multiselect(
         "Selecione os Programas:",
         options=list(CATALOGO.keys()),
-        default=["PPGE (Educação)"] if "PPGE (Educação)" in CATALOGO else None
+        default=programas_sugeridos
     )
     
     for item in selecao:
@@ -129,6 +164,18 @@ elif tipo_grupo == "Edição Manual":
                 GRUPOS_PESQUISA.setdefault(g.strip(), []).append(p.strip())
 
 # ==========================================
+# FILTRO ADICIONAL
+# ==========================================
+st.sidebar.divider()
+st.sidebar.header("3. Filtro Adicional")
+filtro_pesquisador = st.sidebar.text_input(
+    "Buscar por nome do pesquisador",
+    value=filtro_padrao,
+    help="Digite parte do nome para filtrar os dashboards."
+)
+
+
+# ==========================================
 # PROCESSAMENTO (CONDICIONAL)
 # ==========================================
 
@@ -157,6 +204,22 @@ if fontes_para_processar:
         with st.expander("📄 Ver Relatório de Exclusões (Filtragem)", expanded=False):
             st.text_area("Log de Filtragem", log_texto, height=300)
             st.download_button("Baixar Relatório (.txt)", log_texto, file_name="relatorio_filtragem.txt")
+
+        # --- APLICAR FILTRO DE PESQUISADOR (SE HOUVER) ---
+        if filtro_pesquisador:
+            termo_busca_norm = normalizar_texto(filtro_pesquisador)
+            # Criamos uma coluna temporária normalizada para a busca
+            data_raw['pesquisador_norm'] = data_raw['pesquisador'].apply(normalizar_texto)
+            
+            # Filtramos o DataFrame
+            data_raw = data_raw[data_raw['pesquisador_norm'].str.contains(termo_busca_norm)].drop(columns=['pesquisador_norm'])
+            
+            if data_raw.empty:
+                st.warning(f"Nenhum pesquisador encontrado com o termo '{filtro_pesquisador}'.")
+                st.stop() # Interrompe a execução para não gerar gráficos vazios
+            else:
+                st.success(f"Filtro aplicado. Exibindo dados para pesquisadores contendo '{filtro_pesquisador}'.")
+
 
         # --- PROCESSAMENTO DOS DADOS PARA VISUALIZAÇÃO ---
         data = data_raw.copy()
