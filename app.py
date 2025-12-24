@@ -7,7 +7,7 @@ from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 
 # Importações dos módulos locais
-from src.config import PESOS, GRUPOS_PESQUISA
+from src.config import PESOS
 from src.utils import normalizar_texto
 from src.processor import processar_zip_com_filtro
 
@@ -27,67 +27,129 @@ st.markdown("""
 # ==========================================
 st.sidebar.header("1. Configuração de Dados")
 
-# Checkbox para ativar dados de exemplo
-usar_exemplo = st.sidebar.checkbox(
-    "📂 Carregar Dados de Exemplo", 
-    value=False,
-    help="Marque para visualizar o dashboard com dados de demonstração."
+# Seletor de Modo de Dados
+modo_dados = st.sidebar.radio(
+    "Fonte de Dados",
+    ("Upload Manual", "Repositório (Comparativo)"),
+    help="Escolha entre fazer upload dos seus arquivos ou selecionar programas pré-carregados."
 )
 
 st.sidebar.divider()
 
-# Variáveis para armazenar os arquivos finais a serem processados
-arquivo_qualis_final = None
-arquivo_zip_final = None
+fontes_para_processar = []
+data_raw = None
+log_texto = ""
 
-# Lógica de Seleção da Fonte de Dados
-if usar_exemplo:
-    # --- MODO EXEMPLO ---
-    st.sidebar.info("⚠️ Modo de Demonstração Ativo")
+if modo_dados == "Repositório (Comparativo)":
+    st.sidebar.info("⚠️ Modo Repositório Ativo")
     
-    # Caminhos locais (certifique-se que a pasta assets existe)
-    path_qualis = os.path.join(os.path.dirname(__file__), "assets", "lista_qualis_educacao.xlsx")
-    path_zip = os.path.join(os.path.dirname(__file__), "assets", "pesquisadores.zip")
+    # Catálogo de Programas (Simulação de dados remotos/locais)
+    CATALOGO = {
+        "PPGE (Educação)": {
+            "qualis": os.path.join(os.path.dirname(__file__), "assets", "lista_qualis_educacao.xlsx"),
+            "zip": os.path.join(os.path.dirname(__file__), "assets", "pesquisadores_ppge.zip")
+        },
+        "PPGCI (Ciência da Informação)": {
+            "qualis": os.path.join(os.path.dirname(__file__), "assets", "lista_qualis_comunicacao.xlsx"),
+            "zip": os.path.join(os.path.dirname(__file__), "assets", "pesquisadores_ppgci.zip")
+        },
+        "MDCC (Ciência da Computação)": {
+            "qualis": os.path.join(os.path.dirname(__file__), "assets", "lista_qualis_computacao.xlsx"),
+            "zip": os.path.join(os.path.dirname(__file__), "assets", "pesquisadores_mdcc.zip")
+        },
+        # Adicione outros programas aqui conforme disponibilidade
+    }
     
-    # Verifica se arquivos existem antes de tentar carregar
-    if os.path.exists(path_qualis) and os.path.exists(path_zip):
-        arquivo_qualis_final = path_qualis
-        arquivo_zip_final = path_zip
-        
-        # Botões para o usuário baixar os exemplos (Opcional, mas recomendado)
-        #with open(path_zip, "rb") as f:
-        #    st.sidebar.download_button("⬇️ Baixar ZIP Exemplo", f, "exemplo_pesquisadores.zip")
-        #with open(path_qualis, "rb") as f:
-        #    st.sidebar.download_button("⬇️ Baixar Qualis Exemplo", f, "exemplo_qualis.xlsx")
-    else:
-        st.error("Arquivos de exemplo não encontrados na pasta 'assets'.")
+    selecao = st.sidebar.multiselect(
+        "Selecione os Programas:",
+        options=list(CATALOGO.keys()),
+        default=["PPGE (Educação)"] if "PPGE (Educação)" in CATALOGO else None
+    )
+    
+    for item in selecao:
+        caminhos = CATALOGO[item]
+        if os.path.exists(caminhos["qualis"]) and os.path.exists(caminhos["zip"]):
+            fontes_para_processar.append({"nome": item, "qualis": caminhos["qualis"], "zip": caminhos["zip"]})
+        else:
+            st.sidebar.warning(f"Arquivos não encontrados para: {item}")
 
 else:
     # --- MODO UPLOAD MANUAL ---
     st.sidebar.subheader("Upload de Arquivos")
-    arquivo_qualis_final = st.sidebar.file_uploader("1. Lista Qualis (Excel)", type=["xlsx", "xls"])
-    
+    f_qualis = st.sidebar.file_uploader("1. Lista Qualis (Excel)", type=["xlsx", "xls"])
     st.header("2. Arquivos dos Pesquisadores")
-    arquivo_zip_final = st.file_uploader("2. Arraste o arquivo ZIP aqui", type="zip")
+    f_zip = st.file_uploader("2. Arraste o arquivo ZIP aqui", type="zip")
     
-    if not arquivo_qualis_final or not arquivo_zip_final:
+    if f_qualis and f_zip:
+        fontes_para_processar.append({"nome": "Upload Manual", "qualis": f_qualis, "zip": f_zip})
+    else:
         st.info("👆 Faça o upload dos arquivos ou selecione 'Carregar Dados de Exemplo' no menu lateral.")
+
+# ==========================================
+# CONFIGURAÇÃO DE GRUPOS
+# ==========================================
+st.sidebar.divider()
+st.sidebar.header("2. Definição de Grupos")
+
+tipo_grupo = st.sidebar.radio(
+    "Como definir os grupos?",
+    ("Nenhum", "Upload Arquivo (Excel/CSV)", "Edição Manual", "Padrão (PPGE)"),
+    index=0
+)
+
+GRUPOS_PESQUISA = {}
+
+if tipo_grupo == "Padrão (PPGE)":
+    from src.config import GRUPOS_PESQUISA as GP_STATIC
+    GRUPOS_PESQUISA = GP_STATIC
+
+elif tipo_grupo == "Upload Arquivo (Excel/CSV)":
+    f_grupos = st.sidebar.file_uploader("Arquivo (colunas: Pesquisador, Grupo)", type=["xlsx", "csv"])
+    if f_grupos:
+        try:
+            df_g = pd.read_csv(f_grupos) if f_grupos.name.endswith(".csv") else pd.read_excel(f_grupos)
+            df_g.columns = [c.lower().strip() for c in df_g.columns]
+            if "pesquisador" in df_g.columns and "grupo" in df_g.columns:
+                for _, row in df_g.iterrows():
+                    g, p = str(row["grupo"]).strip(), str(row["pesquisador"]).strip()
+                    GRUPOS_PESQUISA.setdefault(g, []).append(p)
+                st.sidebar.success(f"{len(GRUPOS_PESQUISA)} grupos carregados.")
+            else:
+                st.sidebar.error("Colunas obrigatórias: 'Pesquisador', 'Grupo'")
+        except Exception as e:
+            st.sidebar.error(f"Erro: {e}")
+
+elif tipo_grupo == "Edição Manual":
+    st.sidebar.info("Digite abaixo: Pesquisador, Grupo")
+    texto_grupos = st.sidebar.text_area("Mapeamento (um por linha)", height=150, placeholder="João Silva, Grupo A\nMaria Souza, Grupo B")
+    if texto_grupos:
+        for linha in texto_grupos.split("\n"):
+            if "," in linha:
+                p, g = linha.split(",", 1)
+                GRUPOS_PESQUISA.setdefault(g.strip(), []).append(p.strip())
 
 # ==========================================
 # PROCESSAMENTO (CONDICIONAL)
 # ==========================================
 
-# Só roda se tivermos OS DOIS arquivos (seja do exemplo ou do upload)
-if arquivo_zip_final is not None and arquivo_qualis_final is not None:
-    
+if fontes_para_processar:
     with st.spinner('Processando dados...'):
-        try:
-            # Pandas lê tanto upload (bytes) quanto path (string) sem mudar nada
-            df_ref = pd.read_excel(arquivo_qualis_final)
-            data_raw, log_texto = processar_zip_com_filtro(arquivo_zip_final, df_ref)
-        except Exception as e:
-            st.error(f"Erro ao ler arquivos: {e}")
-            data_raw = None
+        dfs = []
+        logs = []
+        for fonte in fontes_para_processar:
+            try:
+                df_ref = pd.read_excel(fonte["qualis"])
+                d, l = processar_zip_com_filtro(fonte["zip"], df_ref)
+                if d is not None:
+                    d["programa_origem"] = fonte["nome"] # Identifica a origem para análise comparativa
+                    dfs.append(d)
+                    logs.append(f"=== LOG: {fonte['nome']} ===\n{l}\n")
+            except Exception as e:
+                st.error(f"Erro ao processar {fonte['nome']}: {e}")
+        
+        if dfs:
+            data_raw = pd.concat(dfs, ignore_index=True)
+            log_texto = "\n".join(logs)
 
     if data_raw is not None:
         st.success(f"Processamento concluído! {len(data_raw)} registros válidos carregados.")
@@ -103,33 +165,45 @@ if arquivo_zip_final is not None and arquivo_qualis_final is not None:
         data["peso"] = data["qualis_norm"].map(PESOS)
         data = data.sort_values("ano_publicacao")
 
-        # --- MATCHING DE GRUPOS ---
-        records_grupos = []
-        correcao_nomes = {}
+        # --- MATCHING DE GRUPOS OU PROGRAMAS ---
+        comparacao_programas = len(fontes_para_processar) > 1
         
-        for idx, row in data.iterrows():
-            nome_no_csv = row["pesquisador"]
-            nome_csv_norm = normalizar_texto(nome_no_csv)
-            
-            for nome_grupo, membros in GRUPOS_PESQUISA.items():
-                for membro_com_acento in membros:
-                    if nome_csv_norm == normalizar_texto(membro_com_acento):
-                        new_row = row.copy()
-                        new_row["linha_pesquisa"] = nome_grupo
-                        new_row["pesquisador"] = membro_com_acento
-                        correcao_nomes[nome_no_csv] = membro_com_acento
-                        records_grupos.append(new_row)
-
-        data["pesquisador"] = data["pesquisador"].map(lambda x: correcao_nomes.get(x, x.title()))
-        
-        if records_grupos:
-            df_grupos = pd.DataFrame(records_grupos)
+        if comparacao_programas:
+            # Modo Comparação de Programas: O "Grupo" vira o "Programa"
+            df_grupos = data.copy()
+            df_grupos["linha_pesquisa"] = df_grupos["programa_origem"]
+            # Normalização simples para visualização
+            df_grupos["pesquisador"] = df_grupos["pesquisador"].astype(str).str.title()
+            data["pesquisador"] = data["pesquisador"].astype(str).str.title()
         else:
-            df_grupos = pd.DataFrame(columns=data.columns.tolist() + ["linha_pesquisa"])
-            st.warning("Nenhum pesquisador correspondeu à lista de Grupos de Pesquisa configurada.")
+            # Modo Análise de Grupos (Interno)
+            records_grupos = []
+            correcao_nomes = {}
+            
+            for idx, row in data.iterrows():
+                nome_no_csv = row["pesquisador"]
+                nome_csv_norm = normalizar_texto(nome_no_csv)
+                
+                for nome_grupo, membros in GRUPOS_PESQUISA.items():
+                    for membro_com_acento in membros:
+                        if nome_csv_norm == normalizar_texto(membro_com_acento):
+                            new_row = row.copy()
+                            new_row["linha_pesquisa"] = nome_grupo
+                            new_row["pesquisador"] = membro_com_acento
+                            correcao_nomes[nome_no_csv] = membro_com_acento
+                            records_grupos.append(new_row)
+
+            data["pesquisador"] = data["pesquisador"].map(lambda x: correcao_nomes.get(x, x.title()))
+            
+            if records_grupos:
+                df_grupos = pd.DataFrame(records_grupos)
+            else:
+                df_grupos = pd.DataFrame(columns=data.columns.tolist() + ["linha_pesquisa"])
+                st.warning("Nenhum pesquisador correspondeu à lista de Grupos de Pesquisa configurada.")
 
         # --- ABAS DA DASHBOARD ---
-        tab1, tab2, tab3 = st.tabs(["👤 Análise Individual", "👥 Análise por Grupos", "📋 Auditoria e Grupos"])
+        titulo_tab2 = "🏢 Análise por Programas" if comparacao_programas else "👥 Análise por Grupos"
+        tab1, tab2, tab3 = st.tabs(["👤 Análise Individual", titulo_tab2, "📋 Auditoria e Grupos"])
 
         # =======================================================
         # TAB 1: INDIVIDUAL
@@ -151,14 +225,14 @@ if arquivo_zip_final is not None and arquivo_qualis_final is not None:
                 soma_ano = df_ano["peso"].sum()
                 df_ano["perc"] = (100 * df_ano["peso"] / soma_ano) if soma_ano > 0 else 0
                 df_ano = df_ano.sort_values("perc", ascending=False)
-                ranking_anual[ano] = "<br>".join(f"{i}. {row['pesquisador']} — {row['perc']:.1f}% (global: {map_perc_global[row['pesquisador']]:.1f}%)" for i, (idx, row) in enumerate(df_ano.iterrows(), start=1))
+                ranking_anual[ano] = "<br>".join(f"{i}. {row['pesquisador']} — {row['perc']:.1f}% (global: {map_perc_global[row['pesquisador']]:.1f}%)" for i, (idx, row) in enumerate(df_ano.head(50).iterrows(), start=1))
 
             ranking_acumulado = {}
             for ano in sorted(total["ano_publicacao"].unique()):
                 df_acc = total[total["ano_publicacao"] <= ano].groupby("pesquisador", as_index=False)["peso"].sum()
                 df_acc["perc_rel"] = (100 * df_acc["peso"] / soma_global)
                 df_acc = df_acc.sort_values("perc_rel", ascending=False)
-                ranking_acumulado[ano] = "<br>".join(f"{i}. {row['pesquisador']} — {row['perc_rel']:.1f}% (global: {map_perc_global[row['pesquisador']]:.1f}%)" for i, (idx, row) in enumerate(df_acc.iterrows(), start=1))
+                ranking_acumulado[ano] = "<br>".join(f"{i}. {row['pesquisador']} — {row['perc_rel']:.1f}% (global: {map_perc_global[row['pesquisador']]:.1f}%)" for i, (idx, row) in enumerate(df_acc.head(50).iterrows(), start=1))
 
             fig_timeline = go.Figure()
             pesquisadores = sorted(total["pesquisador"].unique())
@@ -236,7 +310,7 @@ if arquivo_zip_final is not None and arquivo_qualis_final is not None:
         # TAB 2: GRUPOS
         # =======================================================
         with tab2:
-            st.subheader("Performance por Linha de Pesquisa")
+            st.subheader(f"Performance por {'Programa' if comparacao_programas else 'Linha de Pesquisa'}")
 
             if not df_grupos.empty:
                 group_counts = df_grupos.groupby("linha_pesquisa")["pesquisador"].nunique().reset_index(name="n_membros")
@@ -350,24 +424,26 @@ if arquivo_zip_final is not None and arquivo_qualis_final is not None:
         # TAB 3: AUDITORIA
         # =======================================================
         with tab3:
-            st.subheader("Conferência de Integridade dos Grupos")
-            pesquisadores_no_df = set(data["pesquisador"].unique())
-            
-            for nome_grupo, lista_teorica in GRUPOS_PESQUISA.items():
-                encontrados = sorted([p for p in lista_teorica if p in pesquisadores_no_df])
-                faltando = sorted([p for p in lista_teorica if p not in pesquisadores_no_df])
+            if comparacao_programas:
+                st.info("A auditoria de grupos está desativada no modo de Comparação entre Programas.")
+            else:
+                st.subheader("Conferência de Integridade dos Grupos")
+                pesquisadores_no_df = set(data["pesquisador"].unique())
                 
-                status_icon = "✅" if not faltando else "⚠️"
-                with st.expander(f"{status_icon} {nome_grupo} (Encontrados: {len(encontrados)}/{len(lista_teorica)})"):
-                    c1, c2 = st.columns(2)
-                    c1.write("**Encontrados:**"); 
-                    for p in encontrados: c1.success(f"- {p}")
-                    c2.write("**Faltando:**"); 
-                    for p in faltando: c2.error(f"- {p}")
+                for nome_grupo, lista_teorica in GRUPOS_PESQUISA.items():
+                    encontrados = sorted([p for p in lista_teorica if p in pesquisadores_no_df])
+                    faltando = sorted([p for p in lista_teorica if p not in pesquisadores_no_df])
+                    
+                    status_icon = "✅" if not faltando else "⚠️"
+                    with st.expander(f"{status_icon} {nome_grupo} (Encontrados: {len(encontrados)}/{len(lista_teorica)})"):
+                        c1, c2 = st.columns(2)
+                        c1.write("**Encontrados:**"); 
+                        for p in encontrados: c1.success(f"- {p}")
+                        c2.write("**Faltando:**"); 
+                        for p in faltando: c2.error(f"- {p}")
 
-elif not usar_exemplo:
-    # Se NÃO está no modo exemplo E ainda não tem arquivo (manual), mostra mensagem.
-    if arquivo_zip_final is None and arquivo_qualis_final is not None:
-         st.info("Aguardando upload do arquivo ZIP com os CSVs dos pesquisadores...")
-    elif arquivo_qualis_final is None:
-         st.info("Aguardando upload do arquivo Qualis (Excel) no menu lateral...")
+else:
+    if modo_dados == "Upload Manual":
+        st.info("Aguardando upload dos arquivos (Qualis e ZIP) para gerar o dashboard.")
+    else:
+        st.info("Selecione pelo menos um programa no menu lateral para visualizar os dados.")
