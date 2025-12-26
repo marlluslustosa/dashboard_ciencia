@@ -1,5 +1,4 @@
 import unicodedata
-import pandas as pd
 
 def normalizar_texto(texto):
     """Remove acentos, coloca em minúsculas e padroniza espaços."""
@@ -10,6 +9,6 @@ def normalizar_texto(texto):
 
 def limpar_issn(valor):
     """Remove traços, pontos e espaços do ISSN para comparação segura."""
-    if pd.isna(valor):
+    if valor is None:
         return ""
     return str(valor).replace("-", "").replace(".", "").strip().upper()
