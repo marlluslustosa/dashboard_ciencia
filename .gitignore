@@ -36,4 +36,7 @@ MANIFEST
 nosetests.xml
 coverage.xml
 *.cover
-*.py,cover  
+*.py,cover
+/assets/*.parquet
+*.log
+.ipynb_checkpoints

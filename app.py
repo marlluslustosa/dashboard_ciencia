@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import pandas as pd
+import polars as pl
 import zipfile
 import plotly.graph_objects as go
 from sklearn.preprocessing import StandardScaler
@@ -10,7 +11,7 @@ from sklearn.cluster import KMeans
 # Importações dos módulos locais
 from src.config import PESOS
 from src.utils import normalizar_texto
-from src.processor import processar_zip_com_filtro
+from src.processor import processar_dados_com_filtro
 
 # ==========================================
 # CONFIGURAÇÃO DA PÁGINA
@@ -49,15 +50,18 @@ if modo_dados == "Repositório (Comparativo)":
     CATALOGO = {
         "PPGE (Educação)": {
             "qualis": os.path.join(os.path.dirname(__file__), "assets", "lista_qualis_educacao.xlsx"),
-            "zip": os.path.join(os.path.dirname(__file__), "assets", "pesquisadores_ppge.zip")
+            "path": os.path.join(os.path.dirname(__file__), "assets", "ppge.parquet"),
+            "tipo": "parquet"
         },
         "PPGCI (Ciência da Informação)": {
             "qualis": os.path.join(os.path.dirname(__file__), "assets", "lista_qualis_comunicacao.xlsx"),
-            "zip": os.path.join(os.path.dirname(__file__), "assets", "pesquisadores_ppgci.zip")
+            "path": os.path.join(os.path.dirname(__file__), "assets", "ppgci.parquet"),
+            "tipo": "parquet"
         },
         "MDCC (Ciência da Computação)": {
             "qualis": os.path.join(os.path.dirname(__file__), "assets", "lista_qualis_computacao.xlsx"),
-            "zip": os.path.join(os.path.dirname(__file__), "assets", "pesquisadores_mdcc.zip")
+            "path": os.path.join(os.path.dirname(__file__), "assets", "mdcc.parquet"),
+            "tipo": "parquet"
         },
         # Adicione outros programas aqui conforme disponibilidade
     }
@@ -75,17 +79,16 @@ if modo_dados == "Repositório (Comparativo)":
         
         # Itera sobre os arquivos físicos sem carregar CSVs (Alta Performance)
         for prog, caminhos in CATALOGO.items():
-            zip_path = caminhos["zip"]
-            if os.path.exists(zip_path):
+            f_path = caminhos["path"]
+            if os.path.exists(f_path) and caminhos["tipo"] == "parquet":
                 try:
-                    with zipfile.ZipFile(zip_path, 'r') as z:
-                        # Verifica apenas os nomes dos arquivos dentro do ZIP
-                        for filename in z.namelist():
-                            # Remove extensão e normaliza (ex: "Jose_Silva.csv" -> "jose silva")
-                            nome_limpo = os.path.splitext(os.path.basename(filename))[0].replace("_", " ")
-                            if termo_norm in normalizar_texto(nome_limpo):
-                                encontrados.append(prog)
-                                break # Encontrou neste programa, pula para o próximo
+                    # Scan Lazy do Parquet: Verifica se existe algum pesquisador que contém o termo
+                    # Isso não carrega o arquivo todo na memória
+                    lf = pl.scan_parquet(f_path)
+                    # Filtra e verifica se retorna algo (limit 1 para ser rápido)
+                    existe = lf.filter(pl.col("pesquisador").str.to_lowercase().str.contains(termo_norm)).head(1).collect()
+                    if not existe.is_empty():
+                        encontrados.append(prog)
                 except:
                     pass
         
@@ -103,8 +106,8 @@ if modo_dados == "Repositório (Comparativo)":
     
     for item in selecao:
         caminhos = CATALOGO[item]
-        if os.path.exists(caminhos["qualis"]) and os.path.exists(caminhos["zip"]):
-            fontes_para_processar.append({"nome": item, "qualis": caminhos["qualis"], "zip": caminhos["zip"]})
+        if os.path.exists(caminhos["qualis"]) and os.path.exists(caminhos["path"]):
+            fontes_para_processar.append({"nome": item, "qualis": caminhos["qualis"], "path": caminhos["path"], "tipo": caminhos["tipo"]})
         else:
             st.sidebar.warning(f"Arquivos não encontrados para: {item}")
 
@@ -116,7 +119,7 @@ else:
     f_zip = st.file_uploader("2. Arraste o arquivo ZIP aqui", type="zip")
     
     if f_qualis and f_zip:
-        fontes_para_processar.append({"nome": "Upload Manual", "qualis": f_qualis, "zip": f_zip})
+        fontes_para_processar.append({"nome": "Upload Manual", "qualis": f_qualis, "path": f_zip, "tipo": "zip"})
     else:
         st.info("👆 Faça o upload dos arquivos ou selecione 'Carregar Dados de Exemplo' no menu lateral.")
 
@@ -186,16 +189,18 @@ if fontes_para_processar:
         for fonte in fontes_para_processar:
             try:
                 df_ref = pd.read_excel(fonte["qualis"])
-                d, l = processar_zip_com_filtro(fonte["zip"], df_ref)
+                is_pq = (fonte["tipo"] == "parquet")
+                d, l = processar_dados_com_filtro(fonte["path"], df_ref, is_parquet=is_pq)
+                
                 if d is not None:
-                    d["programa_origem"] = fonte["nome"] # Identifica a origem para análise comparativa
+                    d = d.with_columns(pl.lit(fonte["nome"]).alias("programa_origem"))
                     dfs.append(d)
                     logs.append(f"=== LOG: {fonte['nome']} ===\n{l}\n")
             except Exception as e:
                 st.error(f"Erro ao processar {fonte['nome']}: {e}")
         
         if dfs:
-            data_raw = pd.concat(dfs, ignore_index=True)
+            data_raw = pl.concat(dfs, how="diagonal")
             log_texto = "\n".join(logs)
 
     if data_raw is not None:
@@ -208,13 +213,13 @@ if fontes_para_processar:
         # --- APLICAR FILTRO DE PESQUISADOR (SE HOUVER) ---
         if filtro_pesquisador:
             termo_busca_norm = normalizar_texto(filtro_pesquisador)
-            # Criamos uma coluna temporária normalizada para a busca
-            data_raw['pesquisador_norm'] = data_raw['pesquisador'].apply(normalizar_texto)
             
-            # Filtramos o DataFrame
-            data_raw = data_raw[data_raw['pesquisador_norm'].str.contains(termo_busca_norm)].drop(columns=['pesquisador_norm'])
+            # Filtro Polars
+            data_raw = data_raw.filter(
+                pl.col("pesquisador").str.to_lowercase().str.contains(termo_busca_norm)
+            )
             
-            if data_raw.empty:
+            if data_raw.is_empty():
                 st.warning(f"Nenhum pesquisador encontrado com o termo '{filtro_pesquisador}'.")
                 st.stop() # Interrompe a execução para não gerar gráficos vazios
             else:
@@ -222,28 +227,39 @@ if fontes_para_processar:
 
 
         # --- PROCESSAMENTO DOS DADOS PARA VISUALIZAÇÃO ---
-        data = data_raw.copy()
-        data["qualis_norm"] = data["qualis"].astype(str).str.upper().str.strip()
-        data = data[data["qualis_norm"].isin(PESOS.keys())].copy()
-        data["peso"] = data["qualis_norm"].map(PESOS)
-        data = data.sort_values("ano_publicacao")
+        # Converter para Pandas apenas o necessário ou trabalhar com Polars até o fim
+        # Vamos manter Polars para as transformações
+        data = data_raw.with_columns(
+            pl.col("qualis").cast(pl.Utf8).str.to_uppercase().str.strip_chars().alias("qualis_norm")
+        )
+        data = data.filter(pl.col("qualis_norm").is_in(list(PESOS.keys())))
+        
+        # Map de pesos (Polars replace/map_dict)
+        data = data.with_columns(pl.col("qualis_norm").replace(PESOS, default=0).alias("peso"))
+        data = data.sort("ano_publicacao")
 
         # --- MATCHING DE GRUPOS OU PROGRAMAS ---
         comparacao_programas = len(fontes_para_processar) > 1
         
         if comparacao_programas:
             # Modo Comparação de Programas: O "Grupo" vira o "Programa"
-            df_grupos = data.copy()
-            df_grupos["linha_pesquisa"] = df_grupos["programa_origem"]
-            # Normalização simples para visualização
-            df_grupos["pesquisador"] = df_grupos["pesquisador"].astype(str).str.title()
-            data["pesquisador"] = data["pesquisador"].astype(str).str.title()
+            df_grupos = data.with_columns([
+                pl.col("programa_origem").alias("linha_pesquisa"),
+                pl.col("pesquisador").str.to_titlecase()
+            ])
+            data = data.with_columns(pl.col("pesquisador").str.to_titlecase())
         else:
             # Modo Análise de Grupos (Interno)
+            # Como o matching de grupos é complexo (dicionário python), é mais fácil converter para Pandas aqui
+            # ou usar map_elements, mas para manter compatibilidade com a lógica de "contains", vamos iterar.
+            # Para performance, idealmente GRUPOS_PESQUISA seria um DataFrame de join.
+            
+            # Convertendo para Pandas para realizar o matching de grupos (lógica iterativa complexa)
+            data_pd = data.to_pandas()
             records_grupos = []
             correcao_nomes = {}
             
-            for idx, row in data.iterrows():
+            for idx, row in data_pd.iterrows():
                 nome_no_csv = row["pesquisador"]
                 nome_csv_norm = normalizar_texto(nome_no_csv)
                 
@@ -256,13 +272,27 @@ if fontes_para_processar:
                             correcao_nomes[nome_no_csv] = membro_com_acento
                             records_grupos.append(new_row)
 
-            data["pesquisador"] = data["pesquisador"].map(lambda x: correcao_nomes.get(x, x.title()))
+            data_pd["pesquisador"] = data_pd["pesquisador"].map(lambda x: correcao_nomes.get(x, x.title()))
+            
+            # Volta para Polars ou mantém Pandas? Como o resto do código de plotagem usa Pandas (implícito no código original),
+            # vamos manter df_grupos como Pandas para facilitar a integração com o código legado de plotagem abaixo.
             
             if records_grupos:
                 df_grupos = pd.DataFrame(records_grupos)
             else:
-                df_grupos = pd.DataFrame(columns=data.columns.tolist() + ["linha_pesquisa"])
+                df_grupos = pd.DataFrame(columns=data_pd.columns.tolist() + ["linha_pesquisa"])
                 st.warning("Nenhum pesquisador correspondeu à lista de Grupos de Pesquisa configurada.")
+            
+            # Atualiza data principal também como Pandas para os gráficos individuais
+            data = data_pd
+        
+        # Se estivermos no modo comparação, data e df_grupos ainda são Polars.
+        # Para garantir compatibilidade com o código de plotagem (que usa sintaxe Pandas .groupby),
+        # vamos converter tudo para Pandas neste ponto final.
+        if isinstance(data, pl.DataFrame):
+            data = data.to_pandas()
+        if isinstance(df_grupos, pl.DataFrame):
+            df_grupos = df_grupos.to_pandas()
 
         # --- ABAS DA DASHBOARD ---
         titulo_tab2 = "🏢 Análise por Programas" if comparacao_programas else "👥 Análise por Grupos"
