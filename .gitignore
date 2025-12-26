@@ -37,6 +37,7 @@ nosetests.xml
 coverage.xml
 *.cover
 *.py,cover
-/assets/*.parquet
+/assets/*.zip
+/assets/*.xlsx
 *.log
 .ipynb_checkpoints
