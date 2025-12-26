@@ -49,17 +49,17 @@ if modo_dados == "Repositório (Comparativo)":
     # Catálogo de Programas (Simulação de dados remotos/locais)
     CATALOGO = {
         "PPGE (Educação)": {
-            "qualis": os.path.join(os.path.dirname(__file__), "assets", "lista_qualis_educacao.xlsx"),
+            "qualis": os.path.join(os.path.dirname(__file__), "assets", "lista_qualis_educacao.parquet"),
             "path": os.path.join(os.path.dirname(__file__), "assets", "ppge.parquet"),
             "tipo": "parquet"
         },
         "PPGCI (Ciência da Informação)": {
-            "qualis": os.path.join(os.path.dirname(__file__), "assets", "lista_qualis_comunicacao.xlsx"),
+            "qualis": os.path.join(os.path.dirname(__file__), "assets", "lista_qualis_comunicacao.parquet"),
             "path": os.path.join(os.path.dirname(__file__), "assets", "ppgci.parquet"),
             "tipo": "parquet"
         },
         "MDCC (Ciência da Computação)": {
-            "qualis": os.path.join(os.path.dirname(__file__), "assets", "lista_qualis_computacao.xlsx"),
+            "qualis": os.path.join(os.path.dirname(__file__), "assets", "lista_qualis_computacao.parquet"),
             "path": os.path.join(os.path.dirname(__file__), "assets", "mdcc.parquet"),
             "tipo": "parquet"
         },
@@ -188,7 +188,12 @@ if fontes_para_processar:
         logs = []
         for fonte in fontes_para_processar:
             try:
-                df_ref = pd.read_excel(fonte["qualis"])
+                # Lê Qualis (Parquet ou Excel/Upload)
+                if str(fonte["qualis"]).endswith(".parquet"):
+                    df_ref = pl.read_parquet(fonte["qualis"])
+                else:
+                    df_ref = pd.read_excel(fonte["qualis"])
+                
                 is_pq = (fonte["tipo"] == "parquet")
                 d, l = processar_dados_com_filtro(fonte["path"], df_ref, is_parquet=is_pq)
                 
@@ -235,7 +240,7 @@ if fontes_para_processar:
         data = data.filter(pl.col("qualis_norm").is_in(list(PESOS.keys())))
         
         # Map de pesos (Polars replace/map_dict)
-        data = data.with_columns(pl.col("qualis_norm").replace(PESOS, default=0).alias("peso"))
+        data = data.with_columns(pl.col("qualis_norm").replace_strict(PESOS, default=0).alias("peso"))
         data = data.sort("ano_publicacao")
 
         # --- MATCHING DE GRUPOS OU PROGRAMAS ---
@@ -342,7 +347,7 @@ if fontes_para_processar:
             fig_timeline.add_trace(go.Scatter(x=anos, y=[0]*len(anos), mode="markers", marker=dict(opacity=0), customdata=[ranking_acumulado[a] for a in anos], hovertemplate="<b>Ano %{x}</b><br><br><b>Ranking Acumulado</b><br>%{customdata}<extra></extra>", showlegend=False, visible=False))
 
             fig_timeline.update_layout(title="Linha do Tempo (Individual)", height=800, hovermode="x unified", updatemenus=[dict(buttons=[dict(label="Total Anual", method="update", args=[{"visible": [True]*n_p + [False]*n_p + [True, False]}]), dict(label="Acumulado", method="update", args=[{"visible": [False]*n_p + [True]*n_p + [False, True]}])], direction="down", x=0.01, y=1.12)])
-            st.plotly_chart(fig_timeline, use_container_width=True)
+            st.plotly_chart(fig_timeline, width="stretch")
 
             col1, col2 = st.columns(2)
 
@@ -355,7 +360,7 @@ if fontes_para_processar:
                     vals = [d.loc[d["qualis_norm"]==e, "qtd"].sum() for e in estratos]
                     fig_radar.add_trace(go.Scatterpolar(r=vals+[vals[0]], theta=estratos+[estratos[0]], name=p, fill='toself', opacity=0.35))
                 fig_radar.update_layout(title="Perfil Qualis (Individual)", polar=dict(radialaxis=dict(visible=True)))
-                st.plotly_chart(fig_radar, use_container_width=True)
+                st.plotly_chart(fig_radar, width="stretch")
 
             with col2:
                 map_abc = {"A1":"A","A2":"A","A3":"B","A4":"B","B1":"C","B2":"C","B3":"C","B4":"C"}
@@ -371,12 +376,12 @@ if fontes_para_processar:
                     if r["sum"] == 0: continue
                     fig_ternary.add_trace(go.Scatterternary(a=[r["A"]/r["sum"]], b=[r["B"]/r["sum"]], c=[r["C"]/r["sum"]], mode="markers", name=p, marker=dict(size=14, line=dict(width=1, color='DarkSlateGrey')), hovertemplate=f"<b>{p}</b><br>A: %{{a:.1%}}<br>B: %{{b:.1%}}<br>C: %{{c:.1%}}<extra></extra>"))
                 fig_ternary.update_layout(title="Distribuição Proporcional", ternary=dict(aaxis=dict(title="A"), baxis=dict(title="B"), caxis=dict(title="C")))
-                st.plotly_chart(fig_ternary, use_container_width=True)
+                st.plotly_chart(fig_ternary, width="stretch")
 
             hm_data = total.pivot(index="pesquisador", columns="ano_publicacao", values="peso").fillna(0).sort_index()
             fig_heatmap = go.Figure(data=go.Heatmap(z=hm_data.values, x=hm_data.columns, y=hm_data.index, colorscale="Viridis", colorbar=dict(title="Pontos")))
             fig_heatmap.update_layout(title="Mapa de Calor (Intensidade)", height=max(400, len(hm_data)*30))
-            st.plotly_chart(fig_heatmap, use_container_width=True)
+            st.plotly_chart(fig_heatmap, width="stretch")
 
             c_data = data.groupby(["pesquisador", "qualis_norm"]).size().unstack(fill_value=0)
             for k in PESOS:
@@ -396,7 +401,7 @@ if fontes_para_processar:
                     d = df_vis_c[df_vis_c.cluster == c]
                     fig_cluster.add_trace(go.Scatter(x=d.x, y=d.y, mode="markers+text", text=d.pesquisador, name=f"Grupo {int(c)+1}", marker=dict(size=12, line=dict(width=1, color='DarkSlateGrey')), hovertemplate="<b>%{text}</b><br>Grupo: %{name}<extra></extra>"))
                 fig_cluster.update_layout(title="Cluster de Similaridade (Individual)")
-                st.plotly_chart(fig_cluster, use_container_width=True)
+                st.plotly_chart(fig_cluster, width="stretch")
             else:
                 st.warning("Dados insuficientes para gerar o Cluster de Similaridade. É necessário haver pelo menos 2 pesquisadores para comparação.")
             st.info("Visualização dos gráficos individuais carregada.")
@@ -459,7 +464,7 @@ if fontes_para_processar:
                 fig_time_g.add_trace(go.Scatter(x=anos_g, y=[0]*len(anos_g), mode="markers", marker=dict(opacity=0), customdata=[ranking_acc_g.get(a,"") for a in anos_g], hovertemplate="<b>Ano %{x}</b><br><br><b>Ranking Acumulado (Volume)</b><br>%{customdata}<extra></extra>", showlegend=False, visible=False))
 
                 fig_time_g.update_layout(title="Volume Total de Produção", height=800, hovermode="x unified", updatemenus=[dict(buttons=[dict(label="Total Anual", method="update", args=[{"visible": [True]*n_g + [False]*n_g + [True, False]}]), dict(label="Acumulado", method="update", args=[{"visible": [False]*n_g + [True]*n_g + [False, True]}])], direction="down", x=0.01, y=1.12)])
-                st.plotly_chart(fig_time_g, use_container_width=True)
+                st.plotly_chart(fig_time_g, width="stretch")
 
                 st.divider()
                 st.subheader("Análise de Eficiência (Média e Tamanho)")
@@ -478,7 +483,7 @@ if fontes_para_processar:
                     fig_time_avg.add_trace(go.Scatter(x=anos_g, y=[0]*len(anos_g), mode="markers", marker=dict(opacity=0), customdata=[ranking_avg_anual.get(a,"") for a in anos_g], hovertemplate="<b>Ano %{x}</b><br><br><b>Ranking Eficiência</b><br>%{customdata}<extra></extra>", showlegend=False))
                     fig_time_avg.add_trace(go.Scatter(x=anos_g, y=[0]*len(anos_g), mode="markers", marker=dict(opacity=0), customdata=[ranking_avg_acc.get(a,"") for a in anos_g], hovertemplate="<b>Ano %{x}</b><br><br><b>Ranking Eficiência Acum.</b><br>%{customdata}<extra></extra>", showlegend=False, visible=False))
                     fig_time_avg.update_layout(title="Eficiência (Pontos por Membro)", height=600, hovermode="x unified", yaxis_title="Pontos/Membro", updatemenus=[dict(buttons=[dict(label="Média Anual", method="update", args=[{"visible": [True]*n_g + [False]*n_g + [True, False]}]), dict(label="Média Acumulada", method="update", args=[{"visible": [False]*n_g + [True]*n_g + [False, True]}])], direction="down", x=0.01, y=1.12)])
-                    st.plotly_chart(fig_time_avg, use_container_width=True)
+                    st.plotly_chart(fig_time_avg, width="stretch")
 
                 with col_ef2:
                     fig_bubble = go.Figure()
@@ -489,7 +494,7 @@ if fontes_para_processar:
                                                             marker=dict(size=bubble_size, line=dict(width=1, color='DarkSlateGrey')),
                                                             hovertemplate=f"<b>{g}</b><br>Ano: %{{x}}<br>Pontos: %{{y}}<br>Membros: {d['n_membros'].iloc[0]}<extra></extra>"))
                     fig_bubble.update_layout(title="Volume Total (Tamanho da bolha = Tamanho do Grupo)", height=600, yaxis_title="Pontuação Total")
-                    st.plotly_chart(fig_bubble, use_container_width=True)
+                    st.plotly_chart(fig_bubble, width="stretch")
 
                 st.divider()
                 c_data_g = df_grupos.groupby(["linha_pesquisa", "qualis_norm"]).size().unstack(fill_value=0)
@@ -510,7 +515,7 @@ if fontes_para_processar:
                         d = df_vis_cg[df_vis_cg.cluster == c]
                         fig_cluster_g.add_trace(go.Scatter(x=d.x, y=d.y, mode="markers+text", text=d.grupo, name=f"Grupo {int(c)+1}", marker=dict(size=12, line=dict(width=1, color='DarkSlateGrey')), hovertemplate="<b>%{text}</b><br>Grupo: %{name}<extra></extra>"))
                     fig_cluster_g.update_layout(title="Cluster de Similaridade (Grupos)", height=600)
-                    st.plotly_chart(fig_cluster_g, use_container_width=True)
+                    st.plotly_chart(fig_cluster_g, width="stretch")
                 else:
                     st.warning("Dados insuficientes para gerar o Cluster de Similaridade de Grupos. É necessário haver pelo menos 2 grupos/programas para comparação.")
             else:
